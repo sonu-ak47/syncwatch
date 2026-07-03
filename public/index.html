@@ -28,7 +28,7 @@
 
     <form id="form-join" class="join-form">
       <input id="input-code" type="text" maxlength="5" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
-      <button type="submit" class="btn btn-secondary">Join</button>
+      <button type="submit" class="btn btn-secondary">Join room</button>
     </form>
     <p id="entry-error" class="error-text"></p>
   </div>
@@ -70,8 +70,9 @@
 
   <div class="controls-bar">
     <form id="form-load" class="load-form">
-      <input id="input-url" type="text" placeholder="Paste a YouTube or YouTube Music link…" autocomplete="off">
-      <button type="submit" class="btn btn-primary">Load</button>
+      <input id="input-url" type="text" placeholder="Paste a YouTube video or playlist link…" autocomplete="off">
+      <button type="submit" id="btn-play-now" class="btn btn-primary">Play now</button>
+      <button type="button" id="btn-queue-add" class="btn btn-secondary">Add to queue</button>
     </form>
     <div class="transport" id="transport" aria-disabled="true">
       <button id="btn-playpause" class="btn-icon" title="Play/Pause">▶</button>
@@ -79,13 +80,22 @@
     </div>
   </div>
 
-  <aside class="chat-panel">
-    <div class="chat-log" id="chat-log"></div>
-    <form id="form-chat" class="chat-form">
-      <input id="input-chat" type="text" placeholder="Say something…" autocomplete="off" maxlength="500">
-      <button type="submit" class="btn-icon" title="Send">→</button>
-    </form>
-  </aside>
+  <div class="lower-panels">
+    <section class="queue-panel">
+      <p class="panel-title">Queue</p>
+      <ul class="queue-list" id="queue-list">
+        <li class="queue-empty" id="queue-empty">Nothing queued yet — add a link above.</li>
+      </ul>
+    </section>
+
+    <aside class="chat-panel">
+      <div class="chat-log" id="chat-log"></div>
+      <form id="form-chat" class="chat-form">
+        <input id="input-chat" type="text" placeholder="Say something…" autocomplete="off" maxlength="500">
+        <button type="submit" class="btn-icon" title="Send">→</button>
+      </form>
+    </aside>
+  </div>
 </main>
 
 <script src="/socket.io/socket.io.js"></script>
