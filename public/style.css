@@ -86,6 +86,24 @@ body {
 .btn-ghost { background: transparent; border-color: var(--line); color: var(--muted); }
 .btn-ghost:hover { color: var(--cream); border-color: var(--muted); }
 
+.field-label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+.name-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  color: var(--cream);
+  border-radius: 9px;
+  padding: 13px 14px;
+  font-size: 16px;
+  font-family: var(--font-body);
+}
+
 .divider {
   display: flex; align-items: center; gap: 12px;
   color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
@@ -124,6 +142,8 @@ body {
   margin-bottom: 18px;
 }
 .waiting-copy { color: var(--muted); line-height: 1.7; margin-bottom: 24px; }
+.waiting-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.waiting-actions .btn { width: auto; }
 .pulse-dot {
   width: 12px; height: 12px; border-radius: 50%;
   background: var(--teal);
@@ -138,9 +158,27 @@ body {
 /* ===== Player screen ===== */
 #screen-player { justify-content: flex-start; padding: 20px; max-width: 980px; margin: 0 auto; width: 100%; }
 
-.top-bar { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.room-tag { color: var(--muted); font-size: 13px; }
+.top-bar {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+}
+.room-tag { color: var(--muted); font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .room-tag strong { color: var(--cream); letter-spacing: 2px; }
+.peer-name {
+  color: var(--teal); font-size: 12px;
+  border: 1px solid var(--line); border-radius: 20px; padding: 3px 10px;
+}
+.peer-name:empty { display: none; }
+
+.room-actions { display: flex; gap: 8px; }
+.room-actions .btn-icon {
+  font-size: 12px; border: 1px solid var(--line); border-radius: 7px;
+  padding: 7px 12px; color: var(--muted);
+}
+.room-actions .btn-icon:hover { color: var(--cream); border-color: var(--muted); }
+.room-actions .btn-icon.danger { color: var(--danger); }
+.room-actions .btn-icon.danger:hover { border-color: var(--danger); background: rgba(217,112,79,0.08); }
+.room-actions .btn-icon:disabled { opacity: 0.35; pointer-events: none; }
 
 /* Signature element: sync pulse beam between two viewers */
 .sync-pulse { display: flex; align-items: center; gap: 8px; }
@@ -171,6 +209,22 @@ body {
   text-align: center; padding: 20px;
 }
 .peer-status.hidden { display: none; }
+
+.stage-overlay-controls {
+  position: absolute; top: 10px; right: 10px;
+  display: flex; gap: 6px; z-index: 5;
+}
+.btn-icon.overlay {
+  background: rgba(20,18,15,0.65);
+  border: 1px solid rgba(237,230,218,0.15);
+  color: var(--cream);
+  border-radius: 8px;
+  width: 36px; height: 36px;
+  font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.btn-icon.overlay:hover { background: rgba(20,18,15,0.85); }
 
 .controls-bar {
   width: 100%;
@@ -287,7 +341,38 @@ body {
 #input-chat { flex: 1; background: transparent; border: none; color: var(--cream); padding: 10px 14px; font-size: 13px; }
 .chat-form .btn-icon { color: var(--teal); font-size: 18px; }
 
+/* ===== Mobile ===== */
+@supports (padding: max(0px)) {
+  body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
+
+input, textarea { font-size: 16px; } /* prevents iOS auto-zoom on focus */
+
 @media (max-width: 640px) {
   .room-code-display { font-size: 40px; letter-spacing: 6px; }
   .brand h1 { font-size: 30px; }
+  .entry-card { padding: 20px; }
+
+  #screen-player { padding: 12px; }
+  .stage { border-radius: 8px; }
+
+  .top-bar { gap: 8px; }
+  .sync-pulse { order: 3; width: 100%; justify-content: center; }
+  .room-actions .btn-icon { padding: 9px 12px; font-size: 12px; } /* keep tap target roomy */
+
+  .controls-bar { flex-direction: column; align-items: stretch; }
+  .load-form { flex-direction: column; }
+  .load-form .btn, .load-form input { width: 100%; }
+  .transport { justify-content: space-between; }
+
+  .lower-panels { gap: 12px; }
+  .queue-panel, .chat-panel { height: 140px; }
+
+  .btn-icon.overlay { width: 40px; height: 40px; font-size: 16px; } /* larger touch target */
+}
+
+@media (hover: none) {
+  /* touch devices: make every clickable control comfortably tappable */
+  .btn, .btn-icon { min-height: 40px; }
+  .q-play, .q-remove { padding: 8px; }
 }
