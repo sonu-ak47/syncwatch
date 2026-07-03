@@ -12,10 +12,28 @@ function showScreen(name) {
 }
 
 let roomCode = null;
+let myName = '';
+let peerName = '';
+
+// ---------- Name persistence ----------
+const nameInput = document.getElementById('input-name');
+nameInput.value = localStorage.getItem('syncwatch-name') || '';
+
+function getName() {
+  const val = nameInput.value.trim().slice(0, 24) || 'Guest';
+  localStorage.setItem('syncwatch-name', val);
+  return val;
+}
+
+// Prefill room code from a shared invite link like ?room=ABCDE
+const urlParams = new URLSearchParams(location.search);
+const invitedCode = urlParams.get('room');
+if (invitedCode) document.getElementById('input-code').value = invitedCode.toUpperCase();
 
 // ---------- Entry screen ----------
 document.getElementById('btn-create').addEventListener('click', () => {
-  socket.emit('create-room', null, (res) => {
+  myName = getName();
+  socket.emit('create-room', { name: myName }, (res) => {
     if (!res.ok) return;
     roomCode = res.code;
     document.getElementById('room-code-text').textContent = res.code.split('').join(' ');
@@ -27,12 +45,14 @@ document.getElementById('form-join').addEventListener('submit', (e) => {
   e.preventDefault();
   const code = document.getElementById('input-code').value.trim().toUpperCase();
   if (!code) return;
-  socket.emit('join-room', code, (res) => {
+  myName = getName();
+  socket.emit('join-room', { code, name: myName }, (res) => {
     if (!res.ok) {
       document.getElementById('entry-error').textContent = res.error;
       return;
     }
     roomCode = res.code;
+    peerName = res.peerName || '';
     enterPlayerScreen();
     setPeerConnected(true);
     if (res.queue) { queueState = res.queue; renderQueue(); }
@@ -50,8 +70,16 @@ document.getElementById('btn-copy').addEventListener('click', () => {
   btn.textContent = 'Copied!';
   setTimeout(() => (btn.textContent = 'Copy code'), 1400);
 });
+document.getElementById('btn-copy-link').addEventListener('click', () => {
+  const link = `${location.origin}${location.pathname}?room=${roomCode}`;
+  navigator.clipboard.writeText(link);
+  const btn = document.getElementById('btn-copy-link');
+  btn.textContent = 'Copied!';
+  setTimeout(() => (btn.textContent = 'Copy invite link'), 1400);
+});
 
-socket.on('peer-joined', () => {
+socket.on('peer-joined', (data) => {
+  peerName = (data && data.name) || 'Guest';
   if (screens.waiting.classList.contains('hidden') === false) {
     enterPlayerScreen();
   }
@@ -59,7 +87,13 @@ socket.on('peer-joined', () => {
 });
 
 socket.on('peer-left', () => {
+  peerName = '';
   setPeerConnected(false);
+});
+
+socket.on('kicked', () => {
+  alert('The other person removed you from the room.');
+  resetToEntry();
 });
 
 function enterPlayerScreen() {
@@ -67,14 +101,33 @@ function enterPlayerScreen() {
   showScreen('player');
 }
 
+function resetToEntry() {
+  if (player && player.destroy) { player.destroy(); }
+  player = null;
+  currentMediaId = null;
+  currentMediaType = null;
+  lastKnownState = null;
+  queueState = [];
+  document.getElementById('queue-list').querySelectorAll('.queue-item').forEach((n) => n.remove());
+  document.getElementById('chat-log').innerHTML = '';
+  roomCode = null;
+  peerName = '';
+  document.getElementById('entry-error').textContent = '';
+  showScreen('entry');
+}
+
 function setPeerConnected(connected) {
   const node = document.getElementById('peer-node');
   const pulse = document.getElementById('sync-pulse');
   const status = document.getElementById('peer-status');
   const transport = document.getElementById('transport');
+  const nameTag = document.getElementById('peer-name-tag');
+  const kickBtn = document.getElementById('btn-remove-peer');
   node.classList.toggle('connected', connected);
   pulse.classList.toggle('live', connected);
   transport.setAttribute('aria-disabled', String(!connected));
+  kickBtn.disabled = !connected;
+  nameTag.textContent = connected && peerName ? `with ${peerName}` : '';
   if (connected) {
     status.classList.add('hidden');
   } else {
@@ -82,6 +135,20 @@ function setPeerConnected(connected) {
     status.textContent = 'The other person left. Waiting for them to reconnect…';
   }
 }
+
+// ---------- Leave / Remove ----------
+document.getElementById('btn-leave').addEventListener('click', () => {
+  if (!confirm('Leave this room?')) return;
+  socket.emit('leave-room');
+  resetToEntry();
+});
+document.getElementById('btn-remove-peer').addEventListener('click', () => {
+  if (!peerName) return;
+  if (!confirm(`Remove ${peerName} from the room?`)) return;
+  socket.emit('kick-peer');
+  peerName = '';
+  setPeerConnected(false);
+});
 
 // ---------- Latency ping ----------
 setInterval(() => {
@@ -340,17 +407,17 @@ document.getElementById('form-chat').addEventListener('submit', (e) => {
   const input = document.getElementById('input-chat');
   const text = input.value.trim();
   if (!text) return;
-  appendChat(text, true);
+  appendChat(text, 'You', true);
   socket.emit('chat-message', text);
   input.value = '';
 });
-socket.on('chat-message', (msg) => appendChat(msg.text, false));
+socket.on('chat-message', (msg) => appendChat(msg.text, msg.name || 'Them', false));
 
-function appendChat(text, self) {
+function appendChat(text, who, self) {
   const log = document.getElementById('chat-log');
   const div = document.createElement('div');
   div.className = 'msg' + (self ? ' self' : '');
-  div.innerHTML = `<span class="who">${self ? 'you' : 'them'}</span>${escapeHtml(text)}`;
+  div.innerHTML = `<span class="who">${escapeHtml(who)}</span>${escapeHtml(text)}`;
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
 }
@@ -358,4 +425,52 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ---------- Mute toggle ----------
+document.getElementById('btn-mute').addEventListener('click', () => {
+  if (!player || !player.isMuted) return;
+  const btn = document.getElementById('btn-mute');
+  if (player.isMuted()) { player.unMute(); btn.textContent = '🔊'; }
+  else { player.mute(); btn.textContent = '🔇'; }
+});
+
+// ---------- Picture-in-Picture (moves the live player into a floating window) ----------
+const stageEl = document.querySelector('.stage');
+const stageParent = stageEl.parentNode;
+const stageNextSibling = stageEl.nextSibling;
+let pipWindow = null;
+
+document.getElementById('btn-pip').addEventListener('click', togglePiP);
+
+async function togglePiP() {
+  if (pipWindow) { pipWindow.close(); return; }
+  if (!('documentPictureInPicture' in window)) {
+    alert('Picture-in-picture needs a Chromium browser — Chrome or Edge on desktop, or Chrome on Android.');
+    return;
+  }
+  pipWindow = await window.documentPictureInPicture.requestWindow({ width: 420, height: 236 });
+
+  // Carry over styling so the moved player still looks right in the floating window
+  [...document.styleSheets].forEach((sheet) => {
+    try {
+      const css = [...sheet.cssRules].map((r) => r.cssText).join('');
+      const style = pipWindow.document.createElement('style');
+      style.textContent = css;
+      pipWindow.document.head.appendChild(style);
+    } catch (_) {
+      const link = pipWindow.document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = sheet.href;
+      pipWindow.document.head.appendChild(link);
+    }
+  });
+  pipWindow.document.body.style.margin = '0';
+  pipWindow.document.body.style.background = '#000';
+  pipWindow.document.body.appendChild(stageEl);
+
+  pipWindow.addEventListener('pagehide', () => {
+    stageParent.insertBefore(stageEl, stageNextSibling);
+    pipWindow = null;
+  });
 }
