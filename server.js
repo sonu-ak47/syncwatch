@@ -9,7 +9,7 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// In-memory room state: { code: { members: Set<socketId>, lastState: {...}, queue: [...] } }
+// In-memory room state: { code: { members: Map<socketId, name>, lastState: {...}, queue: [...] } }
 const rooms = new Map();
 
 function genCode() {
@@ -25,27 +25,45 @@ function genQueueId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
+function cleanName(name) {
+  const n = String(name || '').trim().slice(0, 24);
+  return n || 'Guest';
+}
+
+function otherMember(room, socketId) {
+  for (const [id, name] of room.members) {
+    if (id !== socketId) return { id, name };
+  }
+  return null;
+}
+
 io.on('connection', (socket) => {
   let currentRoom = null;
+  let myName = 'Guest';
 
-  socket.on('create-room', (_, cb) => {
+  socket.on('create-room', (payload, cb) => {
+    const name = cleanName(payload && payload.name);
     const code = genCode();
-    rooms.set(code, { members: new Set([socket.id]), lastState: null, queue: [] });
+    rooms.set(code, { members: new Map([[socket.id, name]]), lastState: null, queue: [] });
     socket.join(code);
     currentRoom = code;
+    myName = name;
     cb({ ok: true, code });
   });
 
-  socket.on('join-room', (code, cb) => {
-    code = (code || '').trim().toUpperCase();
+  socket.on('join-room', (payload, cb) => {
+    const code = String((payload && payload.code) || '').trim().toUpperCase();
+    const name = cleanName(payload && payload.name);
     const room = rooms.get(code);
     if (!room) return cb({ ok: false, error: 'Room not found. Check the code.' });
     if (room.members.size >= 2) return cb({ ok: false, error: 'Room is full (2 people max).' });
-    room.members.add(socket.id);
+    const peer = otherMember(room, socket.id);
+    room.members.set(socket.id, name);
     socket.join(code);
     currentRoom = code;
-    cb({ ok: true, code, lastState: room.lastState, queue: room.queue });
-    socket.to(code).emit('peer-joined');
+    myName = name;
+    cb({ ok: true, code, lastState: room.lastState, queue: room.queue, peerName: peer ? peer.name : null });
+    socket.to(code).emit('peer-joined', { name });
   });
 
   // Relay play/pause/seek/load events with server timestamp for drift correction
@@ -108,7 +126,35 @@ io.on('connection', (socket) => {
 
   socket.on('chat-message', (msg) => {
     if (!currentRoom) return;
-    socket.to(currentRoom).emit('chat-message', { text: String(msg).slice(0, 500), self: false });
+    socket.to(currentRoom).emit('chat-message', { text: String(msg).slice(0, 500), name: myName });
+  });
+
+  // Voluntary leave: frees the seat for someone else without deleting the room
+  socket.on('leave-room', () => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (room) {
+      room.members.delete(socket.id);
+      socket.to(currentRoom).emit('peer-left', { kicked: false });
+      if (room.members.size === 0) rooms.delete(currentRoom);
+    }
+    socket.leave(currentRoom);
+    currentRoom = null;
+  });
+
+  // Remove the other person from the room (only meaningful with exactly 2 members)
+  socket.on('kick-peer', () => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const peer = otherMember(room, socket.id);
+    if (!peer) return;
+    room.members.delete(peer.id);
+    const peerSocket = io.sockets.sockets.get(peer.id);
+    if (peerSocket) {
+      peerSocket.leave(currentRoom);
+      peerSocket.emit('kicked');
+    }
   });
 
   socket.on('disconnect', () => {
@@ -116,7 +162,7 @@ io.on('connection', (socket) => {
     const room = rooms.get(currentRoom);
     if (!room) return;
     room.members.delete(socket.id);
-    socket.to(currentRoom).emit('peer-left');
+    socket.to(currentRoom).emit('peer-left', { kicked: false });
     if (room.members.size === 0) rooms.delete(currentRoom);
   });
 });
