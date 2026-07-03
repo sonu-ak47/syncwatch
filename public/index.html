@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>SyncWatch — watch or listen together</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -22,7 +22,10 @@
   <p class="tagline">Two people, two places, one screen.<br>Press play together — down to the frame.</p>
 
   <div class="entry-card">
-    <button id="btn-create" class="btn btn-primary">Start a room</button>
+    <label class="field-label" for="input-name">Your name</label>
+    <input id="input-name" class="name-input" type="text" maxlength="24" placeholder="e.g. Priya" autocomplete="off">
+
+    <button id="btn-create" class="btn btn-primary" style="margin-top:14px;">Start a room</button>
 
     <div class="divider"><span>or join one</span></div>
 
@@ -43,14 +46,20 @@
     <div class="room-code-display" id="room-code-text">— — — — —</div>
     <p class="waiting-copy">Send this code to the other person.<br>Waiting for them to join…</p>
     <div class="pulse-dot"></div>
-    <button id="btn-copy" class="btn btn-ghost">Copy code</button>
+    <div class="waiting-actions">
+      <button id="btn-copy" class="btn btn-ghost">Copy code</button>
+      <button id="btn-copy-link" class="btn btn-ghost">Copy invite link</button>
+    </div>
   </div>
 </main>
 
 <!-- ===== SCREEN 3: SYNCED PLAYER ===== -->
 <main id="screen-player" class="screen hidden">
   <div class="top-bar">
-    <div class="room-tag">Room <strong id="topbar-code">—</strong></div>
+    <div class="room-tag">
+      Room <strong id="topbar-code">—</strong>
+      <span class="peer-name" id="peer-name-tag"></span>
+    </div>
 
     <!-- Signature element: live sync pulse between the two viewers -->
     <div class="sync-pulse" id="sync-pulse" title="Connection sync">
@@ -61,11 +70,20 @@
       <span class="node peer" id="peer-node"></span>
       <span class="sync-ms" id="sync-ms">— ms</span>
     </div>
+
+    <div class="room-actions">
+      <button id="btn-remove-peer" class="btn-icon danger" title="Remove the other person from this room" disabled>Remove</button>
+      <button id="btn-leave" class="btn-icon" title="Leave this room">Leave</button>
+    </div>
   </div>
 
   <div class="stage">
     <div id="player-mount"></div>
     <div id="peer-status" class="peer-status">Waiting for the other person to arrive…</div>
+    <div class="stage-overlay-controls">
+      <button id="btn-mute" class="btn-icon overlay" title="Mute/unmute">🔊</button>
+      <button id="btn-pip" class="btn-icon overlay" title="Picture-in-picture">⧉</button>
+    </div>
   </div>
 
   <div class="controls-bar">
