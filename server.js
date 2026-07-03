@@ -9,7 +9,7 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// In-memory room state: { code: { members: Set<socketId>, video: {...}, state: {...} } }
+// In-memory room state: { code: { members: Set<socketId>, lastState: {...}, queue: [...] } }
 const rooms = new Map();
 
 function genCode() {
@@ -21,12 +21,16 @@ function genCode() {
   return code;
 }
 
+function genQueueId() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 io.on('connection', (socket) => {
   let currentRoom = null;
 
   socket.on('create-room', (_, cb) => {
     const code = genCode();
-    rooms.set(code, { members: new Set([socket.id]), lastState: null });
+    rooms.set(code, { members: new Set([socket.id]), lastState: null, queue: [] });
     socket.join(code);
     currentRoom = code;
     cb({ ok: true, code });
@@ -40,7 +44,7 @@ io.on('connection', (socket) => {
     room.members.add(socket.id);
     socket.join(code);
     currentRoom = code;
-    cb({ ok: true, code, lastState: room.lastState });
+    cb({ ok: true, code, lastState: room.lastState, queue: room.queue });
     socket.to(code).emit('peer-joined');
   });
 
@@ -57,6 +61,49 @@ io.on('connection', (socket) => {
   // Ping/pong for live latency display
   socket.on('ping-check', (t0) => {
     socket.emit('pong-check', t0);
+  });
+
+  // Queue: add a video/playlist without interrupting current playback
+  socket.on('queue-add', (item) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const entry = {
+      id: genQueueId(),
+      mediaType: item.mediaType === 'playlist' ? 'playlist' : 'video',
+      mediaId: String(item.mediaId || '').slice(0, 64),
+      label: String(item.label || 'YouTube video').slice(0, 120),
+    };
+    room.queue.push(entry);
+    io.to(currentRoom).emit('queue-update', room.queue);
+  });
+
+  socket.on('queue-remove', (queueId) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    room.queue = room.queue.filter((q) => q.id !== queueId);
+    io.to(currentRoom).emit('queue-update', room.queue);
+  });
+
+  // Play a queued item immediately for both people, then drop it from the queue
+  socket.on('queue-play-now', (queueId) => {
+    if (!currentRoom) return;
+    const room = rooms.get(currentRoom);
+    if (!room) return;
+    const item = room.queue.find((q) => q.id === queueId);
+    if (!item) return;
+    room.queue = room.queue.filter((q) => q.id !== queueId);
+    io.to(currentRoom).emit('queue-update', room.queue);
+    const stamped = {
+      type: 'load',
+      mediaType: item.mediaType,
+      mediaId: item.mediaId,
+      time: 0,
+      serverTime: Date.now(),
+    };
+    room.lastState = stamped;
+    io.to(currentRoom).emit('sync-event', stamped);
   });
 
   socket.on('chat-message', (msg) => {
