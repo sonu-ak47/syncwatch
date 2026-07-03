@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SyncWatch — watch or listen together</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="grain"></div>
+
+<!-- ===== SCREEN 1: LANDING / ROOM ENTRY ===== -->
+<main id="screen-entry" class="screen">
+  <header class="brand">
+    <span class="brand-mark">●&nbsp;&nbsp;●</span>
+    <h1>SyncWatch</h1>
+  </header>
+
+  <p class="tagline">Two people, two places, one screen.<br>Press play together — down to the frame.</p>
+
+  <div class="entry-card">
+    <button id="btn-create" class="btn btn-primary">Start a room</button>
+
+    <div class="divider"><span>or join one</span></div>
+
+    <form id="form-join" class="join-form">
+      <input id="input-code" type="text" maxlength="5" placeholder="ROOM CODE" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn btn-secondary">Join</button>
+    </form>
+    <p id="entry-error" class="error-text"></p>
+  </div>
+
+  <p class="fine-print">Works with YouTube &amp; YouTube Music links. Both people need the room code — nothing is saved.</p>
+</main>
+
+<!-- ===== SCREEN 2: WAITING ROOM ===== -->
+<main id="screen-waiting" class="screen hidden">
+  <div class="waiting-card">
+    <p class="eyebrow">Your room</p>
+    <div class="room-code-display" id="room-code-text">— — — — —</div>
+    <p class="waiting-copy">Send this code to the other person.<br>Waiting for them to join…</p>
+    <div class="pulse-dot"></div>
+    <button id="btn-copy" class="btn btn-ghost">Copy code</button>
+  </div>
+</main>
+
+<!-- ===== SCREEN 3: SYNCED PLAYER ===== -->
+<main id="screen-player" class="screen hidden">
+  <div class="top-bar">
+    <div class="room-tag">Room <strong id="topbar-code">—</strong></div>
+
+    <!-- Signature element: live sync pulse between the two viewers -->
+    <div class="sync-pulse" id="sync-pulse" title="Connection sync">
+      <span class="node me"></span>
+      <svg class="beam" viewBox="0 0 100 10" preserveAspectRatio="none">
+        <line x1="4" y1="5" x2="96" y2="5" />
+      </svg>
+      <span class="node peer" id="peer-node"></span>
+      <span class="sync-ms" id="sync-ms">— ms</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div id="player-mount"></div>
+    <div id="peer-status" class="peer-status">Waiting for the other person to arrive…</div>
+  </div>
+
+  <div class="controls-bar">
+    <form id="form-load" class="load-form">
+      <input id="input-url" type="text" placeholder="Paste a YouTube or YouTube Music link…" autocomplete="off">
+      <button type="submit" class="btn btn-primary">Load</button>
+    </form>
+    <div class="transport" id="transport" aria-disabled="true">
+      <button id="btn-playpause" class="btn-icon" title="Play/Pause">▶</button>
+      <span class="time-readout" id="time-readout">0:00 / 0:00</span>
+    </div>
+  </div>
+
+  <aside class="chat-panel">
+    <div class="chat-log" id="chat-log"></div>
+    <form id="form-chat" class="chat-form">
+      <input id="input-chat" type="text" placeholder="Say something…" autocomplete="off" maxlength="500">
+      <button type="submit" class="btn-icon" title="Send">→</button>
+    </form>
+  </aside>
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
+<script src="app.js"></script>
+</body>
+</html>
