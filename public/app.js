@@ -35,6 +35,7 @@ document.getElementById('form-join').addEventListener('submit', (e) => {
     roomCode = res.code;
     enterPlayerScreen();
     setPeerConnected(true);
+    if (res.queue) { queueState = res.queue; renderQueue(); }
   });
 });
 
@@ -93,59 +94,76 @@ socket.on('pong-check', (t0) => {
 
 // ---------- YouTube player ----------
 let player = null;
-let currentVideoId = null;
+let currentMediaType = null; // 'video' | 'playlist'
+let currentMediaId = null;
 let suppressBroadcast = false;
 let expectedTime = 0;
 let lastKnownState = null; // 1 playing, 2 paused
+let lastPlaylistIndex = 0;
 
 function onYouTubeIframeAPIReady() {
   // Player is created lazily on first video load — nothing to do yet.
 }
 
-function ensurePlayer(videoId, startSeconds, autoplay) {
-  currentVideoId = videoId;
+function ensurePlayer(mediaType, mediaId, startSeconds, autoplay, index) {
+  currentMediaType = mediaType;
+  currentMediaId = mediaId;
+  lastPlaylistIndex = index || 0;
+
+  const baseVars = { autoplay: autoplay ? 1 : 0, rel: 0, modestbranding: 1, playsinline: 1 };
+  const playerVars = mediaType === 'playlist'
+    ? { ...baseVars, listType: 'playlist', list: mediaId, index: index || 0 }
+    : { ...baseVars, start: Math.max(0, Math.floor(startSeconds || 0)) };
+
   if (!player) {
     player = new YT.Player('player-mount', {
-      videoId,
-      playerVars: {
-        autoplay: autoplay ? 1 : 0,
-        start: Math.max(0, Math.floor(startSeconds || 0)),
-        rel: 0,
-        modestbranding: 1,
-        playsinline: 1,
-      },
+      videoId: mediaType === 'video' ? mediaId : undefined,
+      playerVars,
       events: {
         onReady: () => watchDrift(),
         onStateChange: onPlayerStateChange,
       },
     });
+  } else if (mediaType === 'playlist') {
+    player.loadPlaylist({ list: mediaId, index: index || 0 });
   } else {
-    player.loadVideoById({ videoId, startSeconds: startSeconds || 0 });
+    player.loadVideoById({ videoId: mediaId, startSeconds: startSeconds || 0 });
     if (!autoplay) setTimeout(() => player.pauseVideo(), 400);
   }
 }
 
 function onPlayerStateChange(e) {
   if (suppressBroadcast) return;
+  const idx = currentMediaType === 'playlist' && player.getPlaylistIndex ? player.getPlaylistIndex() : 0;
+  lastPlaylistIndex = idx;
   if (e.data === YT.PlayerState.PLAYING) {
     lastKnownState = 1;
-    broadcast({ type: 'play', time: player.getCurrentTime(), videoId: currentVideoId });
+    broadcast({ type: 'play', time: player.getCurrentTime(), mediaType: currentMediaType, mediaId: currentMediaId, index: idx });
   } else if (e.data === YT.PlayerState.PAUSED) {
     lastKnownState = 2;
-    broadcast({ type: 'pause', time: player.getCurrentTime(), videoId: currentVideoId });
+    broadcast({ type: 'pause', time: player.getCurrentTime(), mediaType: currentMediaType, mediaId: currentMediaId, index: idx });
   }
   updateTransportIcon();
 }
 
-// Poll for local seeks (jumps on the timeline that aren't play/pause events)
+// Poll for local seeks and playlist track changes that aren't play/pause events
 function watchDrift() {
   setInterval(() => {
     if (!player || !player.getCurrentTime || suppressBroadcast) return;
+
+    if (currentMediaType === 'playlist' && player.getPlaylistIndex) {
+      const idx = player.getPlaylistIndex();
+      if (idx !== lastPlaylistIndex) {
+        lastPlaylistIndex = idx;
+        broadcast({ type: lastKnownState === 1 ? 'play' : 'pause', time: player.getCurrentTime(), mediaType: 'playlist', mediaId: currentMediaId, index: idx });
+      }
+    }
+
     if (lastKnownState !== 1) { expectedTime = player.getCurrentTime(); return; }
     const now = player.getCurrentTime();
     const diff = Math.abs(now - expectedTime);
     if (diff > 1.5) {
-      broadcast({ type: 'seek', time: now, videoId: currentVideoId });
+      broadcast({ type: 'seek', time: now, mediaType: currentMediaType, mediaId: currentMediaId, index: lastPlaylistIndex });
     }
     expectedTime = now + 1; // ~1s tick
     updateTimeReadout();
@@ -172,12 +190,20 @@ function broadcast(payload) {
 socket.on('sync-event', (payload) => applyRemote(payload));
 
 function applyRemote(payload) {
-  const { type, time, videoId, serverTime } = payload;
+  const { type, time, mediaType, mediaId, index, serverTime } = payload;
   const latencySec = Math.max(0, (Date.now() - serverTime) / 1000);
   suppressBroadcast = true;
 
-  if (videoId && videoId !== currentVideoId) {
-    ensurePlayer(videoId, time, type !== 'pause');
+  const mediaChanged = mediaId && (mediaId !== currentMediaId || mediaType !== currentMediaType);
+  const playlistTrackChanged = mediaType === 'playlist' && !mediaChanged && typeof index === 'number' && index !== lastPlaylistIndex;
+
+  if (mediaChanged) {
+    ensurePlayer(mediaType, mediaId, time, type !== 'pause', index);
+    lastKnownState = type === 'pause' ? 2 : 1;
+  } else if (playlistTrackChanged && player && player.playVideoAt) {
+    lastPlaylistIndex = index;
+    player.playVideoAt(index);
+    if (type === 'pause') setTimeout(() => player.pauseVideo(), 400);
     lastKnownState = type === 'pause' ? 2 : 1;
   } else if (player) {
     if (type === 'play') {
@@ -201,33 +227,104 @@ function updateTransportIcon() {
   btn.textContent = lastKnownState === 1 ? '⏸' : '▶';
 }
 
-// ---------- Load form ----------
+// ---------- Load form: "Play now" and "Add to queue" ----------
 document.getElementById('form-load').addEventListener('submit', (e) => {
   e.preventDefault();
-  const raw = document.getElementById('input-url').value.trim();
-  const videoId = extractVideoId(raw);
-  if (!videoId) {
-    alert("Couldn't find a YouTube video in that link. Paste a full YouTube or YouTube Music URL.");
+  playInputNow();
+});
+document.getElementById('btn-queue-add').addEventListener('click', () => {
+  queueAddFromInput();
+});
+
+async function playInputNow() {
+  const input = document.getElementById('input-url');
+  const raw = input.value.trim();
+  const media = extractMedia(raw);
+  if (!media) {
+    alert("Couldn't find a YouTube video or playlist in that link.");
     return;
   }
   suppressBroadcast = true;
-  ensurePlayer(videoId, 0, true);
+  ensurePlayer(media.type, media.id, 0, true, 0);
   lastKnownState = 1;
   setTimeout(() => (suppressBroadcast = false), 800);
-  broadcast({ type: 'load', time: 0, videoId });
-  document.getElementById('input-url').value = '';
-});
+  broadcast({ type: 'load', time: 0, mediaType: media.type, mediaId: media.id, index: 0 });
+  input.value = '';
+}
 
-function extractVideoId(input) {
-  if (/^[a-zA-Z0-9_-]{11}$/.test(input)) return input; // raw video ID
+async function queueAddFromInput() {
+  const input = document.getElementById('input-url');
+  const raw = input.value.trim();
+  const media = extractMedia(raw);
+  if (!media) {
+    alert("Couldn't find a YouTube video or playlist in that link.");
+    return;
+  }
+  const label = await fetchTitle(raw, media.type);
+  socket.emit('queue-add', { mediaType: media.type, mediaId: media.id, label });
+  input.value = '';
+}
+
+// Parses a plain video ID, a youtu.be/watch link, a /shorts/ link, or a full playlist link/ID.
+function extractMedia(input) {
+  if (/^(PL|UU|FL|RD|OL)[a-zA-Z0-9_-]{10,}$/.test(input)) return { type: 'playlist', id: input };
+  if (/^[a-zA-Z0-9_-]{11}$/.test(input)) return { type: 'video', id: input };
   try {
     const url = new URL(input);
-    if (url.hostname.includes('youtu.be')) return url.pathname.slice(1);
-    if (url.pathname.startsWith('/shorts/')) return url.pathname.split('/')[2];
+    const list = url.searchParams.get('list');
+    if (list && (url.pathname === '/playlist' || !url.searchParams.get('v'))) {
+      return { type: 'playlist', id: list };
+    }
+    if (url.hostname.includes('youtu.be')) return { type: 'video', id: url.pathname.slice(1) };
+    if (url.pathname.startsWith('/shorts/')) return { type: 'video', id: url.pathname.split('/')[2] };
     const v = url.searchParams.get('v');
-    if (v) return v;
+    if (v) return { type: 'video', id: v };
+    if (list) return { type: 'playlist', id: list };
   } catch (_) { /* not a URL */ }
   return null;
+}
+
+// Best-effort title via YouTube's public oEmbed endpoint (no API key needed). Falls back gracefully.
+async function fetchTitle(url, mediaType) {
+  try {
+    const res = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.title) return data.title;
+    }
+  } catch (_) { /* offline oEmbed lookup failed, use fallback below */ }
+  return mediaType === 'playlist' ? 'YouTube playlist' : 'YouTube video';
+}
+
+// ---------- Queue ----------
+let queueState = [];
+socket.on('queue-update', (queue) => {
+  queueState = queue;
+  renderQueue();
+});
+
+function renderQueue() {
+  const list = document.getElementById('queue-list');
+  const empty = document.getElementById('queue-empty');
+  list.querySelectorAll('.queue-item').forEach((n) => n.remove());
+  if (queueState.length === 0) {
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  queueState.forEach((item) => {
+    const li = document.createElement('li');
+    li.className = 'queue-item';
+    li.innerHTML = `
+      <span class="q-badge">${item.mediaType === 'playlist' ? 'list' : 'video'}</span>
+      <span class="q-label">${escapeHtml(item.label)}</span>
+      <button class="q-play" title="Play now">▶</button>
+      <button class="q-remove" title="Remove">✕</button>
+    `;
+    li.querySelector('.q-play').addEventListener('click', () => socket.emit('queue-play-now', item.id));
+    li.querySelector('.q-remove').addEventListener('click', () => socket.emit('queue-remove', item.id));
+    list.appendChild(li);
+  });
 }
 
 // ---------- Custom play/pause button ----------
