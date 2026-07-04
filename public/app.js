@@ -14,6 +14,16 @@ function showScreen(name) {
 let roomCode = null;
 let myName = '';
 let peerName = '';
+let hasJoinedRoom = false;
+
+// Stable per-browser identity so a brief disconnect/reconnect (wifi blip, tab
+// backgrounded, phone locked) can be recognized as "still the same person"
+// instead of looking like they left.
+let clientId = localStorage.getItem('syncwatch-client-id');
+if (!clientId) {
+  clientId = (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  localStorage.setItem('syncwatch-client-id', clientId);
+}
 
 // ---------- Name persistence ----------
 const nameInput = document.getElementById('input-name');
@@ -33,9 +43,10 @@ if (invitedCode) document.getElementById('input-code').value = invitedCode.toUpp
 // ---------- Entry screen ----------
 document.getElementById('btn-create').addEventListener('click', () => {
   myName = getName();
-  socket.emit('create-room', { name: myName }, (res) => {
+  socket.emit('create-room', { name: myName, clientId }, (res) => {
     if (!res.ok) return;
     roomCode = res.code;
+    hasJoinedRoom = true;
     document.getElementById('room-code-text').textContent = res.code.split('').join(' ');
     showScreen('waiting');
   });
@@ -46,15 +57,16 @@ document.getElementById('form-join').addEventListener('submit', (e) => {
   const code = document.getElementById('input-code').value.trim().toUpperCase();
   if (!code) return;
   myName = getName();
-  socket.emit('join-room', { code, name: myName }, (res) => {
+  socket.emit('join-room', { code, name: myName, clientId }, (res) => {
     if (!res.ok) {
       document.getElementById('entry-error').textContent = res.error;
       return;
     }
     roomCode = res.code;
     peerName = res.peerName || '';
+    hasJoinedRoom = true;
     enterPlayerScreen();
-    setPeerConnected(true);
+    setPeerConnected(!!peerName);
     if (res.queue) { queueState = res.queue; renderQueue(); }
   });
 });
@@ -62,6 +74,41 @@ document.getElementById('form-join').addEventListener('submit', (e) => {
 document.getElementById('input-code').addEventListener('input', (e) => {
   e.target.value = e.target.value.toUpperCase();
 });
+
+// ---------- Reconnect handling ----------
+// Fires on the very first connect AND again after any dropped connection.
+// If we were already in a room, silently rejoin with the same identity
+// instead of showing the entry screen or looking like a new person.
+socket.io.on('reconnect_attempt', () => {
+  if (hasJoinedRoom) showReconnecting(true);
+});
+socket.on('connect', () => {
+  showReconnecting(false);
+  if (hasJoinedRoom && roomCode) {
+    socket.emit('join-room', { code: roomCode, name: myName, clientId }, (res) => {
+      if (!res.ok) {
+        // Room is gone entirely (e.g. server restarted) — nothing to rejoin.
+        resetToEntry();
+        return;
+      }
+      peerName = res.peerName || '';
+      setPeerConnected(!!peerName);
+      if (res.queue) { queueState = res.queue; renderQueue(); }
+      if (res.lastState) applyRemote(res.lastState);
+    });
+  }
+});
+
+function showReconnecting(isReconnecting) {
+  if (!hasJoinedRoom) return;
+  const status = document.getElementById('peer-status');
+  if (isReconnecting) {
+    status.classList.remove('hidden');
+    status.textContent = 'Reconnecting…';
+  } else if (peerName) {
+    status.classList.add('hidden');
+  }
+}
 
 // ---------- Waiting screen ----------
 document.getElementById('btn-copy').addEventListener('click', () => {
@@ -108,6 +155,7 @@ function resetToEntry() {
   currentMediaType = null;
   lastKnownState = null;
   queueState = [];
+  hasJoinedRoom = false;
   document.getElementById('queue-list').querySelectorAll('.queue-item').forEach((n) => n.remove());
   document.getElementById('chat-log').innerHTML = '';
   roomCode = null;
