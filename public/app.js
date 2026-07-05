@@ -1,5 +1,9 @@
 const socket = io();
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {/* non-fatal */});
+}
+
 // ---------- Screens ----------
 const screens = {
   entry: document.getElementById('screen-entry'),
@@ -47,6 +51,7 @@ document.getElementById('btn-create').addEventListener('click', () => {
     if (!res.ok) return;
     roomCode = res.code;
     hasJoinedRoom = true;
+    localStorage.setItem('syncwatch-last-room', res.code);
     document.getElementById('room-code-text').textContent = res.code.split('').join(' ');
     showScreen('waiting');
   });
@@ -65,6 +70,7 @@ document.getElementById('form-join').addEventListener('submit', (e) => {
     roomCode = res.code;
     peerName = res.peerName || '';
     hasJoinedRoom = true;
+    localStorage.setItem('syncwatch-last-room', res.code);
     enterPlayerScreen();
     setPeerConnected(!!peerName);
     if (res.queue) { queueState = res.queue; renderQueue(); }
@@ -473,6 +479,61 @@ function escapeHtml(s) {
   const d = document.createElement('div');
   d.textContent = s;
   return d.innerHTML;
+}
+
+// ---------- Web Share Target ----------
+// When someone hits "Share" on a video in the YouTube app and picks SyncWatch,
+// Android relaunches this page with shared_url/shared_text/shared_title in the
+// query string (see share_target in manifest.json). If we already know which
+// room this device was last in, rejoin it silently and queue the link straight
+// away. Otherwise, just have the link ready to paste in once a room is open.
+// Note: the Web Share Target API is Chromium/Android only — Safari on iOS has
+// no equivalent, so this only appears as a share option on Android devices
+// that have installed SyncWatch to the home screen.
+(function handleSharedLink() {
+  const params = new URLSearchParams(location.search);
+  const sharedUrl = params.get('shared_url') || '';
+  const sharedText = params.get('shared_text') || '';
+  const sharedTitle = params.get('shared_title') || '';
+  if (!sharedUrl && !sharedText) return;
+
+  const match = `${sharedUrl} ${sharedText}`.match(/https?:\/\/\S+/);
+  history.replaceState({}, '', location.pathname); // don't let a refresh re-trigger this
+  if (!match) return;
+
+  const link = match[0];
+  const media = extractMedia(link);
+  if (!media) return;
+
+  const lastRoom = localStorage.getItem('syncwatch-last-room');
+  if (!lastRoom) {
+    promptShareIntoEntry(link);
+    return;
+  }
+
+  myName = getName();
+  socket.emit('join-room', { code: lastRoom, name: myName, clientId }, async (res) => {
+    if (!res.ok) {
+      promptShareIntoEntry(link);
+      return;
+    }
+    roomCode = res.code;
+    peerName = res.peerName || '';
+    hasJoinedRoom = true;
+    enterPlayerScreen();
+    setPeerConnected(!!peerName);
+    if (res.queue) { queueState = res.queue; renderQueue(); }
+    if (res.lastState) applyRemote(res.lastState);
+    const label = sharedTitle || (await fetchTitle(link, media.type));
+    socket.emit('queue-add', { mediaType: media.type, mediaId: media.id, label });
+  });
+})();
+
+function promptShareIntoEntry(link) {
+  const urlBox = document.getElementById('input-url');
+  if (urlBox) urlBox.value = link;
+  const err = document.getElementById('entry-error');
+  if (err) err.textContent = 'Start or join a room, then tap "Add to queue" for the video you shared.';
 }
 
 // ---------- Mute toggle ----------
